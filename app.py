@@ -1,15 +1,15 @@
-import streamlit as st
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import streamlit as st
 
 from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.feature_selection import SelectKBest, f_regression
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score, mean_squared_error
 
@@ -25,22 +25,32 @@ st.markdown("""
 This application analyzes behavioral patterns, psychological triggers, and screen usage to evaluate **Social Media Addiction Risk Scores**.
 """)
 
-# Load Dataset
+# Load Dataset with Flexible Path Handling
 @st.cache_data
 def load_data():
-    # Update path if hosting locally vs relative path
-    df = pd.read_csv("/kaggle/input/datasets/manaswinsripatnala/social-media-dopamine-and-productivity-dataset/social_media_dopamine_productivity.csv")
-    return df
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 1. Primary path: Root directory (where your file currently sits on GitHub)
+    root_path = os.path.join(base_dir, "social_media_dopamine_productivity.csv")
+    if os.path.exists(root_path):
+        return pd.read_csv(root_path)
+        
+    # 2. Secondary path: Inside a /data subfolder
+    data_folder_path = os.path.join(base_dir, "data", "social_media_dopamine_productivity.csv")
+    if os.path.exists(data_folder_path):
+        return pd.read_csv(data_folder_path)
+
+    raise FileNotFoundError("Could not locate 'social_media_dopamine_productivity.csv' in the repository root or /data folder.")
 
 try:
     df = load_data()
 except Exception as e:
-    st.error(f"Please ensure the dataset is present in 'data/social_media_dopamine_productivity.csv'. Error: {e}")
+    st.error(f"Error loading dataset: {e}")
     st.stop()
 
-# Sidebar - Options
+# Sidebar Navigation
 st.sidebar.header("Navigation")
-page = st.sidebar.radio("Go to", ["Executive Summary", "Feature Importance & Correlation", "Live Risk Predictor"])
+page = st.sidebar.radio("Go to", ["Executive Summary", "Feature Importance & Model Metrics", "Live Risk Predictor"])
 
 # Define Features
 numeric_features = [
@@ -52,44 +62,49 @@ categorical_features = [
     'late_night_scrolling', 'first_check_of_day'
 ]
 
-# Preprocessing & Model Pipeline setup
-X = df[numeric_features + categorical_features]
-y = df['sm_addiction_risk_score']
+# Cache Machine Learning Pipeline Setup & Model Training
+@st.cache_resource
+def build_and_train_model(data):
+    X = data[numeric_features + categorical_features]
+    y = data['sm_addiction_risk_score']
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-num_pipeline = Pipeline([
-    ('imputer', SimpleImputer(strategy='median')),
-    ('scaler', StandardScaler())
-])
+    num_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
 
-cat_pipeline = Pipeline([
-    ('imputer', SimpleImputer(strategy='most_frequent')),
-    ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-])
+    cat_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
 
-preprocessor = ColumnTransformer(transformers=[
-    ('num', num_pipeline, numeric_features),
-    ('cat', cat_pipeline, categorical_features)
-])
+    preprocessor = ColumnTransformer(transformers=[
+        ('num', num_pipeline, numeric_features),
+        ('cat', cat_pipeline, categorical_features)
+    ])
 
-X_train_preprocessed = preprocessor.fit_transform(X_train)
-X_test_preprocessed = preprocessor.transform(X_test)
+    X_train_preprocessed = preprocessor.fit_transform(X_train)
+    X_test_preprocessed = preprocessor.transform(X_test)
 
-model = Ridge()
-model.fit(X_train_preprocessed, y_train)
+    model = Ridge()
+    model.fit(X_train_preprocessed, y_train)
 
-y_pred = model.predict(X_test_preprocessed)
-r2 = r2_score(y_test, y_pred)
-rmse = mean_squared_error(y_test, y_pred, squared=False)
+    y_pred = model.predict(X_test_preprocessed)
+    r2 = r2_score(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+
+    return preprocessor, model, r2, rmse
+
+preprocessor, model, r2, rmse = build_and_train_model(df)
 
 # Page 1: Executive Summary
 if page == "Executive Summary":
-    st.header("📌 Executive Summary")
+    st.header("📌 Executive Summary & Problem Overview")
     st.markdown("""
-    - **Objective:** Investigate and rank core behavioral and psychological factors associated with social media addiction risk.
-    - **Methodology:** Leakage-free preprocessing pipeline utilizing `ColumnTransformer`, `SelectKBest`, and `Ridge Regression`.
-    - **Model Performance:** 
+    * **Objective:** Investigate and rank core behavioral and psychological factors associated with elevated social media addiction risk using machine learning methods.
+    * **Methodology:** Implemented a data-leakage-free preprocessing pipeline featuring train-test splitting, median/mode imputation, One-Hot Encoding, Standard Scaling, and Ridge Regression.
     """)
     
     col1, col2 = st.columns(2)
@@ -99,8 +114,8 @@ if page == "Executive Summary":
     st.subheader("Dataset Sample")
     st.dataframe(df.head(10))
 
-# Page 2: Feature Importance & Correlation
-elif page == "Feature Importance & Correlation":
+# Page 2: Feature Importance & Model Metrics
+elif page == "Feature Importance & Model Metrics":
     st.header("📊 Feature Importance Analysis")
 
     encoded_cat_names = preprocessor.named_transformers_['cat']['ohe'].get_feature_names_out(categorical_features)
@@ -124,10 +139,15 @@ elif page == "Feature Importance & Correlation":
     ax.set_title('Top 10 Ridge Regression Feature Coefficients')
     st.pyplot(fig)
 
+    st.markdown("""
+    * **Strongest Risk Drivers:** High continuous metrics such as daily social media hours (`avg_daily_sm_hours`) and dopamine sensitivity (`dopamine_rush_feel_score`) strongly elevate addiction risk.
+    * **Protective Factors:** High self-regulation metrics (`inability_to_delay_gratification_Never`) serve as major protective barriers against addiction risk.
+    """)
+
 # Page 3: Live Risk Predictor
 elif page == "Live Risk Predictor":
-    st.header("🔮 Estimate Addiction Risk Score")
-    st.write("Adjust the behavioral levers below to generate a model prediction:")
+    st.header("🔮 Estimate Social Media Addiction Risk Score")
+    st.write("Adjust the behavioral and psychological variables below to generate an instant prediction:")
 
     col1, col2 = st.columns(2)
 
@@ -144,7 +164,7 @@ elif page == "Live Risk Predictor":
         late_night = st.selectbox("Late Night Scrolling Habits", df['late_night_scrolling'].dropna().unique())
         first_check = st.selectbox("First Check of the Day", df['first_check_of_day'].dropna().unique())
 
-    # Build input dataframe
+    # Build input dataframe for prediction
     user_input = pd.DataFrame([{
         'avg_daily_sm_hours': avg_sm_hours,
         'dopamine_rush_feel_score': dopamine_score,

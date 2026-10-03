@@ -29,7 +29,7 @@ This application analyzes behavioral patterns, psychological triggers, and scree
 @st.cache_data
 def load_data():
     # Update path if hosting locally vs relative path
-    df = pd.read_csv("data/social_media_dopamine_productivity.csv")
+    df = pd.read_csv("/kaggle/input/datasets/manaswinsripatnala/social-media-dopamine-and-productivity-dataset/social_media_dopamine_productivity.csv")
     return df
 
 try:
